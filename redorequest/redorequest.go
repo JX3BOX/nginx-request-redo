@@ -7,44 +7,46 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 
 	"github.com/satyrius/gonx"
 )
 
 type NginxConf struct {
-	LogFilePath      string            `json:"logFilePath"`      // nginx日志文件路径
-	TargetRouter     []string          `json:"targetRouter"`     // 需要重新发起的接口路由
-	LogFormat        string            `json:"logFormat"`        // 日志格式
-	StatusCode       []int             `json:"statusCode"`       // 请求的状态码要求
-	Server           string            `json:"server"`           // 服务器 地址, http(s)://ip:port 或者 http(s)://domain.com
-	ExtraHeaders     map[string]string `json:"extraHeaders"`     // 需要增加的header头
-	ExtraQueryParams map[string]string `json:"extraQueryParams"` // 需要增加的查询参数
+	LogFilePath      string              `json:"logFilePath"`      // nginx日志文件路径
+	RouterField      string              `json:"routerFiled"`      // 路由对应的日志字段名，当使用默认日志格式时，该值可选， 否则必填
+	LogFormat        string              `json:"logFormat"`        // 可选，有默认值， 日志格式参考: github.com/satyrius/gonx
+	Filter           map[string][]string `json:"filter"`           // 需要过滤的参数。 {[变量名]:Array<匹配值>}
+	Server           string              `json:"server"`           // 服务器 地址, http(s)://ip:port 或者 http(s)://domain.com
+	ExtraHeaders     map[string]string   `json:"extraHeaders"`     // 需要增加的header头
+	ExtraQueryParams map[string]string   `json:"extraQueryParams"` // 需要增加的查询参数
 }
 
-func inStatusCode(status string, codeList []int) bool {
-	if codeList == nil || len(codeList) == 0 {
+func matchFilter(value string, rules []string) bool {
+	if rules == nil || len(rules) == 0 {
 		return true
 	}
-	for _, code := range codeList {
-		if strconv.Itoa(code) == status {
+	for _, router := range rules {
+		if router == value {
 			return true
 		}
 	}
 	return false
 }
-func matchRouter(uri string, routerList []string) bool {
-	if routerList == nil || len(routerList) == 0 {
-		return true
+
+func CheckConf(conf *NginxConf) string {
+
+	if conf.Server == "" || conf.LogFilePath == "" {
+		return "关键server, logFilePath不能为空"
 	}
 
-	for _, router := range routerList {
-		// TODO 待改进，支持路由通配符等
-		if router == uri {
-			return true
+	if conf.LogFormat == "" {
+		conf.LogFormat = `$remote_addr - $remote_user [$time_local] "$request_method $request_uri $http_version" $status $bytes_sent "-" "$http_user_agent"`
+		if conf.RouterField == "" {
+			conf.RouterField = "request_uri"
 		}
 	}
-	return false
+
+	return ""
 }
 
 var client = http.Client{}
@@ -92,13 +94,13 @@ func RedoRequest(conf NginxConf) {
 		if err == io.EOF {
 			break
 		}
-		if status, err := rec.Field("status"); err != nil || !inStatusCode(status, conf.StatusCode) {
-			continue
-		}
-		if uri, err := rec.Field("request_uri"); err == nil && uri != "" {
-			if matchRouter(uri, conf.TargetRouter) {
-				redo(uri, conf)
+		for field, value := range conf.Filter {
+			if v, err := rec.Field(field); err != nil || !matchFilter(v, value) {
+				continue
 			}
+		}
+		if uri, err := rec.Field(conf.RouterField); err == nil && uri != "" {
+			redo(uri, conf)
 		}
 	}
 }

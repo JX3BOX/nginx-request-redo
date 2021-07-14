@@ -19,5 +19,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if msg := redorequest.CheckConf(&conf); msg != "" {
+		log.Fatal(msg)
+	}
 	redorequest.RedoRequest(conf)
 }
